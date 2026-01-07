@@ -1,0 +1,290 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>조교 관리</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: system-ui, -apple-system, "Noto Sans KR", sans-serif; background:#f7f7f8; margin:0; }
+    .wrap { max-width: 900px; margin: 0 auto; padding: 16px; }
+    .card { background:#fff; border:1px solid #e6e6e6; border-radius:14px; padding:16px; margin-bottom:14px; }
+    h1 { font-size:20px; margin:0 0 10px; }
+    h2 { font-size:16px; margin:0 0 10px; }
+    label { display:block; margin:10px 0 6px; font-size:14px; color:#222; }
+    select, input, button { width:100%; height:44px; border-radius:12px; border:1px solid #d9d9d9; padding:10px 12px; font-size:16px; }
+    button { border:none; background:#111; color:#fff; font-weight:700; cursor:pointer; }
+    button.secondary { background:#444; }
+    .row { display:grid; grid-template-columns: 1fr 1fr; gap:12px; }
+    .grid { display:grid; grid-template-columns: repeat(10, 1fr); gap:8px; }
+    .cell label { font-size:12px; color:#666; margin:0 0 4px; }
+    .cell input { text-align:center; height:40px; font-weight:600; }
+    table { width:100%; border-collapse: collapse; }
+    th, td { border-bottom: 1px solid #eee; padding:10px; text-align:left; font-size:14px; }
+    th { color:#666; font-weight:700; }
+    .msg { margin-top:10px; padding:10px; border-radius:12px; display:none; white-space: pre-line; }
+    .msg.ok { display:block; background:#eefbf1; border:1px solid #bfe8c7; color:#145a22; }
+    .msg.err { display:block; background:#fff2f2; border:1px solid #f1b6b6; color:#7a1010; }
+
+    /* 삭제 버튼만 조금 작게 */
+    .delbtn {
+      height: 34px;
+      padding: 0 10px;
+      border-radius: 10px;
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>조교 관리 페이지</h1>
+
+      <div class="row">
+        <div>
+          <label>수업 선택</label>
+          <select id="group">
+            <option value="">선택</option>
+            <option value="고1A">고1A</option>
+            <option value="고1B">고1B</option>
+            <option value="고2A">고2A</option>
+            <option value="고2B">고2B</option>
+            <option value="고3미적">고3 미적</option>
+            <option value="고3확통">고3 확통</option>
+          </select>
+        </div>
+        <div>
+          <label>문항 수</label>
+          <input id="count" placeholder="예: 17" />
+        </div>
+      </div>
+
+      <div style="margin-top:10px;">
+        <button id="loadBtn" class="secondary">정답 불러오기</button>
+      </div>
+
+      <div id="answerArea" style="margin-top:12px; display:none;">
+        <h2>정답 입력</h2>
+        <div id="answerGrid" class="grid"></div>
+        <div style="margin-top:10px;">
+          <button id="saveBtn">정답 저장</button>
+        </div>
+      </div>
+
+      <div id="msg" class="msg"></div>
+    </div>
+
+    <div class="card">
+      <h2>제출 결과</h2>
+      <div style="display:flex; gap:10px;">
+        <button id="refreshBtn" class="secondary" style="flex:1;">새로고침</button>
+      </div>
+
+      <div style="margin-top:10px; overflow:auto;">
+        <table>
+          <thead>
+            <tr>
+              <th style="width:180px;">시간</th>
+              <th style="width:120px;">이름</th>
+              <th>오답번호</th>
+              <th style="width:90px;">삭제</th>
+            </tr>
+          </thead>
+          <tbody id="tbody">
+            <tr><td colspan="4" style="color:#666;">수업 선택 후 새로고침을 누르세요.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script>
+  // ⭐ 웹 앱 URL
+  const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwu9vh2eeZ7IEel7RURO3c5fVEDWPHeMlwCKbwx7Qtgv6NK8CbvbZP9a2hmBFE-LApZ/exec";
+
+  const groupEl = document.getElementById("group");
+  const countEl = document.getElementById("count");
+  const loadBtn = document.getElementById("loadBtn");
+  const saveBtn = document.getElementById("saveBtn");
+  const answerArea = document.getElementById("answerArea");
+  const answerGrid = document.getElementById("answerGrid");
+  const msgEl = document.getElementById("msg");
+
+  const refreshBtn = document.getElementById("refreshBtn");
+  const tbody = document.getElementById("tbody");
+
+  /* ================= 메시지 (자동 숨김) ================= */
+  let msgTimer = null;
+  function showMsg(type, text, autoHideMs = 2500) {
+    msgEl.className = "msg " + type;
+    msgEl.textContent = text;
+    msgEl.style.display = "block";
+
+    if (msgTimer) clearTimeout(msgTimer);
+    if (autoHideMs > 0) {
+      msgTimer = setTimeout(() => {
+        msgEl.style.display = "none";
+        msgEl.textContent = "";
+        msgEl.className = "msg";
+      }, autoHideMs);
+    }
+  }
+
+  /* ================= 서버 통신 ================= */
+  async function post(data) {
+    const res = await fetch(SCRIPT_URL, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
+      body: JSON.stringify(data)
+    });
+
+    const text = await res.text();
+    try {
+      return JSON.parse(text);
+    } catch {
+      return { status: "error", message: "서버 응답 파싱 실패", raw: text };
+    }
+  }
+
+  /* ================= 정답 입력 UI ================= */
+  function renderAnswerInputs(count, values = []) {
+    answerGrid.innerHTML = "";
+    for (let i = 1; i <= count; i++) {
+      const cell = document.createElement("div");
+      cell.className = "cell";
+
+      const label = document.createElement("label");
+      label.textContent = i + "번";
+
+      const input = document.createElement("input");
+      input.type = "text";
+      input.value = values[i - 1] ?? "";
+
+      cell.appendChild(label);
+      cell.appendChild(input);
+      answerGrid.appendChild(cell);
+    }
+    answerArea.style.display = "block";
+  }
+
+  /* ================= 자동 정답 불러오기 ================= */
+  async function loadAnswerByGroup(group) {
+    if (!group) {
+      countEl.value = "";
+      answerArea.style.display = "none";
+      tbody.innerHTML = `<tr><td colspan="4" style="color:#666;">수업 선택 후 새로고침을 누르세요.</td></tr>`;
+      return;
+    }
+
+    const out = await post({ type: "getAnswerConfig", group });
+    if (out.status !== "ok") {
+      showMsg("err", out.message || "정답 불러오기 실패");
+      return;
+    }
+
+    countEl.value = out.count || "";
+    if (out.count) {
+      renderAnswerInputs(out.count, out.answers || []);
+      showMsg("ok", "정답 불러오기 완료");
+    } else {
+      answerArea.style.display = "none";
+      showMsg("ok", "저장된 정답이 없습니다. 문항 수를 입력하세요.");
+    }
+
+    // 제출 결과도 자동 새로고침
+    refreshBtn.click();
+  }
+
+  /* ================= 이벤트 ================= */
+
+  // 🔥 분반 선택 시 자동 로딩
+  groupEl.addEventListener("change", () => {
+    loadAnswerByGroup(groupEl.value);
+  });
+
+  // (버튼 눌러도 동작은 동일)
+  loadBtn.addEventListener("click", () => {
+    loadAnswerByGroup(groupEl.value);
+  });
+
+  countEl.addEventListener("input", () => {
+    const count = Number(countEl.value || 0);
+    if (count > 0) renderAnswerInputs(count);
+    else answerArea.style.display = "none";
+  });
+
+  saveBtn.addEventListener("click", async () => {
+    const group = groupEl.value;
+    const count = Number(countEl.value || 0);
+
+    if (!group) return showMsg("err", "수업을 선택해주세요.");
+    if (!count) return showMsg("err", "문항 수를 숫자로 입력해주세요.");
+
+    const answers = Array.from(answerGrid.querySelectorAll("input")).map(i => i.value);
+    const out = await post({ type: "saveAnswerConfig", group, count, answers });
+
+    if (out.status === "ok") showMsg("ok", "정답 저장 완료!");
+    else showMsg("err", out.message || "정답 저장 실패");
+  });
+
+  // 삭제 (이벤트 위임)
+  tbody.addEventListener("click", async (e) => {
+    const btn = e.target.closest(".js-del");
+    if (!btn) return;
+
+    const id = btn.dataset.id;
+    if (!id) return showMsg("err", "id가 비었습니다.");
+
+    if (!confirm("이 제출 결과를 삭제할까요?")) return;
+
+    const out = await post({ type: "deleteSubmission", id });
+    if (out.status === "ok") {
+      showMsg("ok", "삭제 완료");
+      refreshBtn.click();
+    } else {
+      showMsg("err", out.message || "삭제 실패");
+    }
+  });
+
+  refreshBtn.addEventListener("click", async () => {
+    const group = groupEl.value;
+    if (!group) return;
+
+    const out = await post({ type: "getSubmissions", group });
+    if (out.status !== "ok") {
+      showMsg("err", out.message || "불러오기 실패");
+      return;
+    }
+
+    const list = out.submissions || [];
+    if (!list.length) {
+      tbody.innerHTML = `<tr><td colspan="4" style="color:#666;">제출 데이터가 없습니다.</td></tr>`;
+      return;
+    }
+
+    tbody.innerHTML = list.map(x => `
+      <tr>
+        <td>${new Date(x.time).toLocaleString()}</td>
+        <td>${escapeHtml(x.name)}</td>
+        <td>${escapeHtml((x.wrong || "").replace(/,/g, ", "))}</td>
+        <td>
+          <button class="secondary delbtn js-del" data-id="${escapeAttr(x.id)}">삭제</button>
+        </td>
+      </tr>
+    `).join("");
+  });
+
+  /* ================= util ================= */
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, m => ({
+      "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
+    }[m]));
+  }
+
+  function escapeAttr(s) {
+    return String(s).replace(/&/g, "&amp;").replace(/"/g, "&quot;");
+  }
+</script>
+
+</body>
+</html>

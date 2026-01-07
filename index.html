@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>답 입력</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: system-ui, -apple-system, "Noto Sans KR", sans-serif; background:#f7f7f8; margin:0; color:#111; }
+    .container { max-width: 520px; margin: 0 auto; padding: 16px; }
+    .card { background:#fff; border:1px solid #e6e6e6; border-radius:14px; padding:18px; }
+    h1 { font-size:20px; margin:0 0 10px; }
+    .hint { font-size:13px; color:#666; margin:0 0 14px; }
+    label { display:block; font-size:14px; margin:14px 0 6px; }
+    select, input, button { width:100%; height:48px; padding:10px 12px; font-size:16px; border-radius:12px; border:1px solid #d9d9d9; }
+    button { border:none; background:#111; color:#fff; font-weight:700; cursor:pointer; margin-top:14px; }
+    .msg { margin-top:12px; padding:12px; border-radius:12px; display:none; white-space:pre-line; }
+    .msg.ok { display:block; background:#eefbf1; border:1px solid #bfe8c7; color:#145a22; }
+    .msg.err { display:block; background:#fff2f2; border:1px solid #f1b6b6; color:#7a1010; }
+    .qa { margin-top:16px; padding-top:14px; border-top:1px solid #e6e6e6; display:none; }
+    .grid { display:grid; grid-template-columns: repeat(5, 1fr); gap:10px; }
+    .cell label { font-size:12px; color:#666; margin:0 0 4px; }
+    .cell input { height:44px; text-align:center; font-weight:600; }
+    @media (max-width: 380px) { .grid { grid-template-columns: repeat(4, 1fr); } }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="card">
+      <h1>학생 답 입력</h1>
+      <p class="hint">수업 선택 → 이름 → 답 입력 → 제출</p>
+
+      <label>수업 선택</label>
+      <select id="group">
+        <option value="">선택</option>
+        <option value="고1A">고1A</option>
+        <option value="고1B">고1B</option>
+        <option value="고2A">고2A</option>
+        <option value="고2B">고2B</option>
+        <option value="고3미적">고3 미적</option>
+        <option value="고3확통">고3 확통</option>
+      </select>
+
+      <label>이름</label>
+      <input id="name" placeholder="이름을 입력하세요" autocomplete="off" />
+
+      <div id="msg" class="msg"></div>
+
+      <div id="qa" class="qa">
+        <div id="grid" class="grid"></div>
+        <button id="submitBtn">제출</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // ⭐ 여기에 네 웹 앱 URL 붙여넣기
+    const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwu9vh2eeZ7IEel7RURO3c5fVEDWPHeMlwCKbwx7Qtgv6NK8CbvbZP9a2hmBFE-LApZ/exec";
+
+    const groupEl = document.getElementById("group");
+    const nameEl = document.getElementById("name");
+    const msgEl = document.getElementById("msg");
+    const qaEl = document.getElementById("qa");
+    const gridEl = document.getElementById("grid");
+    const submitBtn = document.getElementById("submitBtn");
+
+    let currentConfig = null; // {count, answers}
+
+    function showMsg(type, text) {
+      msgEl.className = "msg " + type;
+      msgEl.textContent = text;
+    }
+    function clearMsg() {
+      msgEl.className = "msg";
+      msgEl.textContent = "";
+    }
+
+    async function post(data) {
+  const res = await fetch(SCRIPT_URL, {
+    method: "POST",
+    headers: { "Content-Type": "text/plain;charset=utf-8" },
+    body: JSON.stringify(data)
+  });
+
+  const text = await res.text();   // ✅ 원본 응답을 먼저 읽기
+  console.log("RAW RESPONSE:", text);
+
+  try {
+    return JSON.parse(text);
+  } catch (e) {
+    return { status: "error", message: "JSON 파싱 실패", raw: text };
+  }
+}
+
+
+    function renderQuestions(count) {
+      gridEl.innerHTML = "";
+      for (let i = 1; i <= count; i++) {
+        const cell = document.createElement("div");
+        cell.className = "cell";
+
+        const label = document.createElement("label");
+        label.textContent = i + "번";
+
+        const input = document.createElement("input");
+        input.type = "text";
+        input.dataset.idx = String(i-1);
+
+        cell.appendChild(label);
+        cell.appendChild(input);
+        gridEl.appendChild(cell);
+      }
+      qaEl.style.display = "block";
+    }
+
+    function normalize(s) {
+      return String(s ?? "").trim().toLowerCase();
+    }
+
+    function grade(studentAnswers, correctAnswers) {
+      const wrong = [];
+      for (let i = 0; i < correctAnswers.length; i++) {
+        if (normalize(studentAnswers[i]) !== normalize(correctAnswers[i])) wrong.push(i + 1);
+      }
+      return wrong;
+    }
+
+    async function tryLoadConfigAndRender() {
+      clearMsg();
+      qaEl.style.display = "none";
+      gridEl.innerHTML = "";
+      currentConfig = null;
+
+      const group = groupEl.value;
+      const name = nameEl.value.trim();
+      if (!group || !name) return;
+
+      showMsg("ok", "정답 불러오는 중...");
+      const out = await post({ type: "getAnswerConfig", group });
+      console.log(out);
+
+      if (out.status !== "ok") {
+        showMsg("err", out.message || "정답 불러오기 실패");
+        return;
+      }
+      if (!out.count) {
+        showMsg("err", "아직 이 수업의 정답이 설정되지 않았습니다. 조교에게 문의하세요.");
+        return;
+      }
+
+      currentConfig = { count: out.count, answers: out.answers || [] };
+      showMsg("ok", `정답 설정 확인됨: 총 ${out.count}문항\n답을 입력하세요.`);
+      renderQuestions(out.count);
+    }
+
+    groupEl.addEventListener("change", tryLoadConfigAndRender);
+    nameEl.addEventListener("input", tryLoadConfigAndRender);
+
+    submitBtn.addEventListener("click", async () => {
+      const group = groupEl.value;
+      const name = nameEl.value.trim();
+      if (!group || !name) return showMsg("err", "수업과 이름을 입력해주세요.");
+      if (!currentConfig) return showMsg("err", "정답 설정을 불러오지 못했습니다.");
+
+      const inputs = gridEl.querySelectorAll("input");
+      const studentAnswers = Array.from(inputs).map(i => i.value);
+
+      const wrongNumbers = grade(studentAnswers, currentConfig.answers);
+
+      showMsg("ok", "제출 중...");
+      const out = await post({ type: "saveSubmission", group, name, wrongNumbers });
+
+      if (out.status === "ok") {
+        showMsg("ok", "제출 완료되었습니다.\n답지는 조교가 따로 안내합니다.");
+        qaEl.style.display = "none";
+      } else {
+        showMsg("err", out.message || "제출 실패");
+      }
+    });
+  </script>
+</body>
+</html>
